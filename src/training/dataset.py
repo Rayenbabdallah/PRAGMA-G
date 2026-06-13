@@ -9,9 +9,10 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import torch
-from torch import Tensor
+from torch import Tensor, nn
 from torch.utils.data import Dataset
 
+from src.model.pragma_mini import PRAGMAMini
 from src.tokenizer.tokenizer import EncodedEvent, KVTTokenizer, event_from_row
 from src.tokenizer.vocab import Vocab
 
@@ -91,6 +92,51 @@ def collate_histories(
         "event_time_deltas": event_time_deltas,
         "event_padding_mask": event_padding_mask,
     }
+
+
+def compute_node_embeddings(
+    model: PRAGMAMini | nn.Module,
+    transactions_df: pd.DataFrame,
+    vocab: Vocab,
+    account_to_idx: dict[str, int],
+    d_model: int,
+    max_events: int = 64,
+    device: str = "cpu",
+) -> Tensor:
+    """Runs PRAGMA-Mini over each account's transaction history and scatters the
+    resulting `z_h` embeddings into a `(N, d_model)` tensor indexed by
+    `account_to_idx` (graph node order). Accounts with no outgoing
+    transactions (e.g. receive-only nodes) keep a zero embedding.
+
+    `model` may be a plain `PRAGMAMini` or a `peft` LoRA-wrapped version of
+    one — both are callable with a single `batch: dict[str, Tensor]` argument.
+    """
+    tokenizer = KVTTokenizer(vocab)
+    n_nodes = len(account_to_idx)
+    embeddings = torch.zeros(n_nodes, d_model, device=device)
+
+    histories: dict[str, list[dict]] = {}
+    for account, group in transactions_df.groupby("Account"):
+        group = group.sort_values("Timestamp")
+        events = [event_from_row(row) for _, row in group.iterrows()][:max_events]
+        if events:
+            histories[str(account)] = events
+
+    accounts_with_history = [acc for acc in account_to_idx if acc in histories]
+    if not accounts_with_history:
+        return embeddings
+
+    encoded = [tokenizer.encode_history(histories[acc]) for acc in accounts_with_history]
+    batch = collate_histories(encoded, vocab, max_events)
+    batch = {k: v.to(device) for k, v in batch.items()}
+
+    output = model(batch)
+    node_idx = torch.tensor(
+        [account_to_idx[acc] for acc in accounts_with_history], device=device, dtype=torch.long
+    )
+    # `index_copy` (functional, out-of-place) keeps the gradient connection to
+    # `output["z_h"]`, unlike an in-place `embeddings[node_idx] = ...`.
+    return embeddings.index_copy(0, node_idx, output["z_h"])
 
 
 def make_synthetic_transactions_df(

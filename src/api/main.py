@@ -2,28 +2,26 @@
 from __future__ import annotations
 
 import time
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
-from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from starlette.responses import Response
 
-from src.api.schemas import TransactionRequest, ScoreResponse, ExplainResponse
 from src.api.model_loader import ModelLoader
-from src.monitoring.metrics import (
-    REQUEST_COUNT, REQUEST_LATENCY, SCORE_HISTOGRAM, record_request
-)
-
+from src.api.schemas import ExplainResponse, ScoreResponse, TransactionRequest
+from src.monitoring.metrics import record_request
 
 # Singleton model loader
 _loader: ModelLoader | None = None
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Load model on startup, clean up on shutdown."""
     global _loader
     logger.info("Loading PRAGMA-G model...")

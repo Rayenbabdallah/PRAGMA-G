@@ -15,6 +15,7 @@ select = ["E", "F", "I", "UP"]
 python_version = "3.11"
 ignore_missing_imports = true
 disallow_untyped_defs = true
+plugins = ["pydantic.mypy"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
