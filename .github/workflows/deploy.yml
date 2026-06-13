@@ -1,0 +1,38 @@
+name: Deploy to Hugging Face Spaces
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install huggingface_hub
+        run: pip install huggingface_hub
+
+      - name: Deploy to HF Spaces
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE: ${{ secrets.HF_SPACE }}  # e.g. "yourusername/pragma-g"
+        run: |
+          python - <<'EOF'
+          from huggingface_hub import HfApi
+          api = HfApi()
+          api.upload_folder(
+              folder_path=".",
+              repo_id="${{ env.HF_SPACE }}",
+              repo_type="space",
+              token="${{ env.HF_TOKEN }}",
+              ignore_patterns=["data/*", ".git/*", "*.pyc", "__pycache__/*",
+                               "*.egg-info/*", "notebooks/*"],
+          )
+          print("Deployed to HF Spaces successfully")
+          EOF

@@ -1,0 +1,117 @@
+# PRAGMA-S configuration — faithful to Table 1 of arXiv:2604.08649
+# Use this config for all development and training runs
+
+model:
+  name: pragma-s
+  params: 10_000_000  # approximately 10M parameters
+
+  # Architecture (Table 1 of paper)
+  d_model: 192
+  d_ffn: 768
+  n_heads: 3
+  dropout: 0.1
+  activation: gelu
+  norm_type: pre_norm  # pre-norm layer normalisation (Xiong et al. 2020)
+
+  # Branch depths (Table 1 of paper)
+  profile_encoder:
+    n_layers: 1
+
+  event_encoder:
+    n_layers: 5
+
+  history_encoder:
+    n_layers: 2
+
+  # Tokenisation
+  tokenizer:
+    key_vocab_size: 64       # ~60 tokens per paper, +4 special tokens
+    value_vocab_size: 28672  # ~28K tokens per paper
+    n_numerical_buckets: 100 # percentile buckets per numerical field
+    categorical_threshold: 1000  # fields with < threshold unique values = categorical
+    max_value_tokens_per_field: 8  # max subword tokens for textual fields
+
+  # Sequence limits
+  max_events_per_account: 512   # truncation for high-activity users
+  max_profile_tokens: 32        # profile state + lifelong events
+
+  # Temporal encoding
+  temporal:
+    log_scale_factor: 8.0       # 8 * ln(1 + t/8) per paper §2.2
+    use_rope: true              # Rotary Position Embedding
+    use_calendar: true          # hour, day-of-week, day-of-month features
+
+# Graph extension (PRAGMA-G)
+graph:
+  model: graphsage
+  in_channels: 192    # = d_model (PRAGMA-Mini output)
+  hidden_channels: 256
+  out_channels: 192
+  n_layers: 3         # 3 layers = 2-hop neighbourhood
+  aggregation: mean   # mean aggregation (stable for high-degree hubs)
+  dropout: 0.1
+  edge_feature_dim: 4  # [amount_log, time_delta_log, format_id, currency_id]
+
+  # LoRA for fine-tuning PRAGMA-Mini
+  lora:
+    r: 8
+    alpha: 16
+    target_modules: ["query", "value"]  # apply to QV projections in History Encoder
+
+# Training
+pretrain:
+  epochs: 20
+  batch_size: 64
+  learning_rate: 1.0e-4
+  warmup_steps: 1000
+  weight_decay: 0.01
+  gradient_clip: 1.0
+  mlm_mask_prob: 0.15
+  sequence_packing: true  # pack multiple short histories per batch
+  dynamic_batching: true  # sort by length to minimise padding
+
+finetune:
+  epochs: 10
+  batch_size: 32
+  learning_rate: 5.0e-5
+  warmup_steps: 500
+  weight_decay: 0.01
+  gradient_clip: 1.0
+  # Class imbalance (HI-Small: ~5% illicit)
+  pos_weight: 19.0  # N_neg / N_pos = 95 / 5 = 19
+  # Two-stage fine-tuning
+  stage_1_epochs: 5   # freeze PRAGMA-Mini, train GraphSAGE head
+  stage_2_epochs: 5   # LoRA fine-tune PRAGMA-Mini
+
+# MLflow tracking
+mlflow:
+  experiment_name: pragma-g-aml
+  tracking_uri: http://localhost:5000
+  artifact_location: mlruns/
+  model_registry_name: pragma-g-aml
+
+# Data
+data:
+  train_path: data/HI-Small_Trans.csv
+  train_split: 0.6
+  val_split: 0.2
+  test_split: 0.2
+  sort_by: Timestamp  # always sort chronologically
+
+# API serving
+api:
+  host: "0.0.0.0"
+  port: 8000
+  workers: 1  # single worker for HF Spaces free tier
+  warmup_requests: 10
+  model_stage: Production  # load from MLflow Production stage
+  thresholds:
+    version: "v1.0"
+    flag: 0.70
+    review: 0.30
+
+# Monitoring
+monitoring:
+  drift_check_interval: 10000  # requests between drift checks
+  drift_report_dir: monitoring/reports/
+  prometheus_port: 8001

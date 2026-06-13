@@ -1,0 +1,74 @@
+# PRAGMA-G dependencies
+# Python 3.11
+
+# Deep learning
+torch==2.3.1
+torchvision==0.18.1
+
+# Graph ML
+torch-geometric==2.5.3
+torch-scatter==2.1.2
+torch-sparse==0.6.18
+
+# Parameter-efficient fine-tuning
+peft==0.11.1
+
+# Data science
+numpy==1.26.4
+pandas==2.2.2
+scikit-learn==1.5.0
+scipy==1.13.1
+
+# NLP / tokenisation (for BPE text fields)
+sentencepiece==0.2.0
+tokenizers==0.19.1
+
+# Explainability
+shap==0.45.1
+
+# Experiment tracking
+mlflow==2.13.2
+
+# API serving
+fastapi==0.111.1
+uvicorn[standard]==0.30.1
+pydantic==2.7.4
+
+# Monitoring
+evidently==0.4.33
+prometheus-client==0.20.0
+
+# Streaming
+# Redpanda is Kafka-compatible — use kafka-python
+kafka-python==2.0.2
+
+# Database (for audit log)
+psycopg2-binary==2.9.9
+sqlalchemy==2.0.30
+
+# Visualisation (notebooks + What-If UI)
+matplotlib==3.9.0
+networkx==3.3
+pyvis==0.3.2
+streamlit==1.35.0
+gradio==4.37.2
+
+# Dev / testing
+pytest==8.2.2
+pytest-asyncio==0.23.7
+httpx==0.27.0  # for FastAPI test client
+ruff==0.4.8
+mypy==1.10.0
+
+# Data download
+kaggle==1.6.14
+
+# Notebook
+jupyter==1.0.0
+ipykernel==6.29.4
+
+# Utils
+python-dotenv==1.0.1
+pyyaml==6.0.1
+tqdm==4.66.4
+loguru==0.7.2

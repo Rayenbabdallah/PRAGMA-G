@@ -1,0 +1,115 @@
+version: "3.9"
+
+services:
+  # PRAGMA-G API
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - REDIS_URL=redis://redis:6379
+      - POSTGRES_URL=postgresql://pragma:pragma@postgres:5432/pragma_g
+    depends_on:
+      - mlflow
+      - redis
+      - postgres
+    volumes:
+      - ./configs:/app/configs:ro
+      - ./data:/app/data:ro
+    restart: unless-stopped
+
+  # MLflow tracking server
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.13.2
+    ports:
+      - "5000:5000"
+    command: >
+      mlflow server
+      --host 0.0.0.0
+      --port 5000
+      --backend-store-uri postgresql://pragma:pragma@postgres:5432/mlflow
+      --default-artifact-root /mlflow-artifacts
+    volumes:
+      - mlflow-artifacts:/mlflow-artifacts
+    depends_on:
+      - postgres
+    restart: unless-stopped
+
+  # Redis (online feature store)
+  redis:
+    image: redis:7.2-alpine
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+  # PostgreSQL (audit log + MLflow backend)
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: pragma
+      POSTGRES_PASSWORD: pragma
+      POSTGRES_DB: pragma_g
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./scripts/init_db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    restart: unless-stopped
+
+  # Redpanda (Kafka-compatible streaming)
+  redpanda:
+    image: redpandadata/redpanda:v23.3.18
+    ports:
+      - "9092:9092"
+      - "9644:9644"
+    command:
+      - redpanda start
+      - --smp 1
+      - --memory 512M
+      - --overprovisioned
+      - --node-id 0
+      - --kafka-addr PLAINTEXT://0.0.0.0:9092
+      - --advertise-kafka-addr PLAINTEXT://localhost:9092
+    restart: unless-stopped
+
+  # Transaction stream producer (replays IBM AML as live events)
+  producer:
+    build: .
+    command: python -m scripts.stream_producer
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=redpanda:9092
+    depends_on:
+      - redpanda
+    volumes:
+      - ./data:/app/data:ro
+    restart: unless-stopped
+    profiles: ["streaming"]  # only starts with: docker-compose --profile streaming up
+
+  # Prometheus
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    restart: unless-stopped
+
+  # Grafana
+  grafana:
+    image: grafana/grafana:11.0.0
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  mlflow-artifacts:
+  grafana-data:
