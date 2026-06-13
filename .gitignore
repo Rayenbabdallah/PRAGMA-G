@@ -18,6 +18,7 @@ data/
 # ML artifacts
 mlruns/
 mlartifacts/
+mlflow.db
 *.ckpt
 *.pt
 *.pth
