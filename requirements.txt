@@ -6,9 +6,11 @@ torch==2.3.1
 torchvision==0.18.1
 
 # Graph ML
+# torch-scatter / torch-sparse are intentionally omitted: they build from
+# source against the installed torch version and fail under pip's build
+# isolation. torch_geometric.utils.scatter (built into torch-geometric)
+# covers everything this project needs.
 torch-geometric==2.5.3
-torch-scatter==2.1.2
-torch-sparse==0.6.18
 
 # Parameter-efficient fine-tuning
 peft==0.11.1
