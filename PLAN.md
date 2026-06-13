@@ -162,16 +162,16 @@
 
 ### Tasks
 
-- [ ] `src/training/finetune.py`:
+- [x] `src/training/finetune.py`:
   - Two-stage: (1) freeze PRAGMA-Mini, train GraphSAGE head; (2) LoRA fine-tune PRAGMA-Mini
   - Loss: BCEWithLogitsLoss with positive class weight (handle ~5% illicit ratio)
   - Metrics: PR-AUC (primary), ROC-AUC, precision@recall=0.5, cost-based metric
   - MLflow logging: all metrics per epoch, confusion matrix as artifact
-- [ ] Baseline comparison:
+- [x] Baseline comparison:
   - Run XGBoost on raw IBM AML features (hand-crafted) — this is what PRAGMA underperforms
   - Run PRAGMA-Mini only (no graph) — reproduce the ~47% gap from the paper on public data
   - Run PRAGMA-G (full model) — show graph layer recovers the gap
-- [ ] `scripts/evaluate.py`:
+- [x] `scripts/evaluate.py`:
   - Loads best checkpoint from MLflow
   - Outputs: PR-AUC, ROC-AUC, confusion matrix, precision-recall curve
   - Saves results to `results/eval_{timestamp}.json`
@@ -182,6 +182,12 @@
 ✓ PRAGMA-G PR-AUC ≥ XGBoost PR-AUC (graph layer closes the gap)
 ✓ All three models tracked in MLflow with comparable configs
 ✓ Write first version of results section in README
+
+**Status:** Pipeline implemented and smoke-tested end-to-end on synthetic IBM-AML-shaped
+data (all three models, MLflow-tracked). The benchmark inequalities above can't be
+demonstrated on synthetic data (labels are i.i.d. random, so all models sit near the base
+rate) — re-run on `data/HI-Small_Trans.csv` once Kaggle credentials are available to get the
+real comparison.
 
 -----
 

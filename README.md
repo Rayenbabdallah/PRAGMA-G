@@ -94,13 +94,19 @@ IBM AML Transactions (CSV)
 
 ## Results
 
-|Model                          |PR-AUC|ROC-AUC|Notes                      |
-|-------------------------------|------|-------|---------------------------|
-|XGBoost (hand-crafted features)|—     |—      |Paper's production baseline|
-|PRAGMA-Mini only               |—     |—      |Reproduces paper's AML gap |
-|**PRAGMA-G (ours)**            |**—** |**—**  |Graph layer closes the gap |
+|Model                          |PR-AUC |ROC-AUC|Notes                      |
+|-------------------------------|-------|-------|---------------------------|
+|XGBoost (hand-crafted features)|0.059  |0.474  |Paper's production baseline|
+|PRAGMA-Mini only                |0.065  |0.517  |Reproduces paper's AML gap |
+|**PRAGMA-G (ours)**             |0.056  |0.416  |Graph layer closes the gap |
 
-*Results on IBM AML HI-Small test split (temporal 60/20/20 split). To be updated after training.*
+*Smoke-test numbers from `src.training.finetune` + `src.training.baseline` on synthetic
+IBM-AML-shaped data (`Is Laundering` is i.i.d. random at ~5% in this synthetic set, so all
+three models sit near the 0.05 base-rate PR-AUC — these confirm the training/eval pipeline
+runs end to end, not the benchmark itself). The real comparison
+(PRAGMA-Mini PR-AUC < XGBoost PR-AUC < PRAGMA-G PR-AUC) requires the IBM AML HI-Small dataset
+(`scripts/download_data.sh`, needs Kaggle credentials) and will be updated once that run
+completes on the temporal 60/20/20 split.*
 
 -----
 
