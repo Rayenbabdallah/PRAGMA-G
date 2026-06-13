@@ -1,0 +1,35 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# Environment variables
+.env
+
+# Data (never commit datasets)
+data/
+
+# ML artifacts
+mlruns/
+mlartifacts/
+*.ckpt
+*.pt
+*.pth
+
+# Monitoring reports
+monitoring/reports/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Editors / OS
+.DS_Store
+*.egg-info/
+build/
+dist/
