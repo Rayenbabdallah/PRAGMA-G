@@ -57,5 +57,34 @@ jobs:
           vocab = Vocab()
           vocab.build(df)
           assert len(vocab.key2id) > 5, 'Key vocab too small'
-          print('Data validation gate: PASSED')
+          print('Vocab gate: PASSED')
+
+          # Evidently data-quality test suite: two synthetic batches from the
+          # same generator should not trip any data-quality checks (missing
+          # values, constant/duplicated columns, duplicated rows, schema drift).
+          from evidently.test_suite import TestSuite
+          from evidently.tests import (
+              TestNumberOfColumnsWithMissingValues,
+              TestNumberOfRowsWithMissingValues,
+              TestNumberOfConstantColumns,
+              TestNumberOfDuplicatedRows,
+              TestNumberOfDuplicatedColumns,
+              TestColumnsType,
+          )
+          from src.training.dataset import make_synthetic_transactions_df
+
+          ref = make_synthetic_transactions_df(n=500, seed=1)
+          cur = make_synthetic_transactions_df(n=500, seed=2)
+          suite = TestSuite(tests=[
+              TestNumberOfColumnsWithMissingValues(),
+              TestNumberOfRowsWithMissingValues(),
+              TestNumberOfConstantColumns(),
+              TestNumberOfDuplicatedRows(),
+              TestNumberOfDuplicatedColumns(),
+              TestColumnsType(),
+          ])
+          suite.run(reference_data=ref, current_data=cur)
+          summary = suite.as_dict()['summary']
+          assert summary['all_passed'], f'Evidently data-quality tests failed: {summary}'
+          print('Evidently data-quality gate: PASSED')
           "

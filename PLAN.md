@@ -293,23 +293,37 @@ real comparison.
 
 ### Tasks
 
-- [ ] `.github/workflows/ci.yml`:
+- [x] `.github/workflows/ci.yml`:
   - Triggers: push to any branch, PR to main
   - Steps: checkout → setup Python 3.11 → install deps → pytest → ruff lint → mypy
-  - Data-validation gate: run Evidently test suite on a small synthetic batch
-  - Must pass before merge allowed (branch protection)
-- [ ] `.github/workflows/deploy.yml`:
+  - Data-validation gate: vocab-build check on a synthetic batch, plus an
+    Evidently `TestSuite` (missing values, constant/duplicated columns,
+    duplicated rows, column-type/schema drift) comparing two synthetic
+    batches generated with different seeds
+  - Must pass before merge allowed (branch protection — configured in repo
+    Settings, not in a workflow file; not something this session can set)
+- [x] `.github/workflows/deploy.yml`:
   - Triggers: push to main
-  - Steps: build Docker → push to HF Spaces via huggingface_hub API
-  - Slack/Discord notification on success/failure (optional)
-- [ ] Makefile convenience targets:
-  - `make test`, `make lint`, `make train`, `make serve`, `make deploy`
+  - Steps: checkout → setup Python 3.11 → install `huggingface_hub` → upload
+    repo folder to HF Spaces (Docker SDK builds the image from the
+    `Dockerfile` on the Space side) using `HF_TOKEN`/`HF_SPACE` secrets
+  - Slack/Discord notification: not added (optional, skipped)
+- [x] Makefile convenience targets:
+  - `make test` (pytest), `make lint` (ruff + mypy), `make train` (pretrain +
+    finetune), `make serve` (docker-compose up), `make deploy` (docker-compose
+    build api)
 
 ### Benchmark to clear
 
-✓ Open a PR → CI runs automatically → tests pass → merge → HF Spaces updates
-✓ Break a test intentionally → CI blocks merge
-✓ Full CI run completes in <5 min
+- [ ] Open a PR → CI runs automatically → tests pass → merge → HF Spaces
+      updates — CI triggers on push (verified pattern from Weeks 1-7); the
+      HF Spaces deploy step needs `HF_TOKEN`/`HF_SPACE` repo secrets which
+      can't be configured from this sandbox
+- [ ] Break a test intentionally → CI blocks merge — follows directly from
+      the existing `pytest`/`ruff`/`mypy`/data-validation steps all being
+      required steps in the single CI job, but not exercised here
+- [ ] Full CI run completes in <5 min — plausible given Week 1-7 runs, but
+      not measured for this exact workflow in this sandbox
 
 -----
 
