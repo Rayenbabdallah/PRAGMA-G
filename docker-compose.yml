@@ -84,6 +84,25 @@ services:
     restart: unless-stopped
     profiles: ["streaming"]  # only starts with: docker-compose --profile streaming up
 
+  # Stream consumer: scores each transaction via the API, writes audit log to
+  # Postgres, and periodically runs the Evidently drift check.
+  consumer:
+    build: .
+    command: python -m scripts.stream_consumer
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=redpanda:9092
+      - PRAGMA_G_API_URL=http://api:8000
+      - POSTGRES_URL=postgresql://pragma:pragma@postgres:5432/pragma_g
+    depends_on:
+      - redpanda
+      - api
+      - postgres
+    volumes:
+      - ./configs:/app/configs:ro
+      - ./monitoring:/app/monitoring
+    restart: unless-stopped
+    profiles: ["streaming"]  # only starts with: docker-compose --profile streaming up
+
   # Prometheus
   prometheus:
     image: prom/prometheus:v2.53.0

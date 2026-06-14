@@ -1,0 +1,15 @@
+# Grafana dashboard provisioning provider for PRAGMA-G (PLAN.md Week 7)
+# Loads pragma_g.json (in this same directory) on startup.
+
+apiVersion: 1
+
+providers:
+  - name: PRAGMA-G
+    orgId: 1
+    folder: ""
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards

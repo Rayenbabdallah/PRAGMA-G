@@ -244,25 +244,45 @@ real comparison.
 
 ### Tasks
 
-- [ ] Redpanda (Kafka-compatible) local setup in docker-compose:
+- [x] Redpanda (Kafka-compatible) local setup in docker-compose:
   - Topic: `aml_transactions`
-  - Producer: replays IBM AML HI-Small as live events (1 event per 10ms = ~100 tx/s)
-  - Consumer: calls /score, writes (account_id, score, decision, timestamp) to Postgres
-- [ ] `src/monitoring/drift.py`:
-  - Evidently `DataDriftPreset` on feature distributions
-  - Triggered daily (or every 10K requests)
-  - Saves HTML report to `monitoring/reports/`
-- [ ] `src/monitoring/metrics.py`:
-  - Prometheus counters: `pragma_g_requests_total`, `pragma_g_latency_seconds`,
-    `pragma_g_score_histogram`, `pragma_g_drift_detected`
-- [ ] Grafana dashboard (provisioned via docker-compose):
-  - Panels: requests/sec, p50/p95/p99 latency, score distribution, drift alerts
+  - Producer (`scripts/stream_producer.py`): replays `data/HI-Small_Trans.csv`
+    (falls back to synthetic transactions if not downloaded) at ~100 tx/s
+    (1 event / 10ms)
+  - Consumer (`scripts/stream_consumer.py`): maps each row to a
+    `TransactionRequest`, calls `/score`, writes `(account_id, score, decision,
+    scored_at)` to the `scored_transactions` Postgres table
+    (`scripts/init_db.sql`)
+  - Both run as `profiles: ["streaming"]` services (start with
+    `docker-compose --profile streaming up`); not exercised end-to-end here —
+    needs a running Redpanda/Postgres/API stack
+- [x] `src/monitoring/drift.py`:
+  - Evidently `DataDriftPreset` over `[Amount Paid, Amount Received, Payment
+    Format, Payment Currency, Receiving Currency]`
+  - `run_drift_check(reference, current)` saves an HTML report to
+    `monitoring/reports/` and sets `pragma_g_drift_detected`
+  - Triggered by `stream_consumer.py` every `monitoring.drift_check_interval`
+    (10K) scored transactions
+  - Tests in `tests/test_drift.py` cover both no-drift and drift-detected cases
+- [x] `src/monitoring/metrics.py`:
+  - Prometheus counters/histograms: `pragma_g_requests_total`,
+    `pragma_g_latency_seconds`, `pragma_g_score_histogram`, plus the
+    `pragma_g_drift_detected` gauge added this week
+- [x] Grafana dashboard (provisioned via docker-compose):
+  - `monitoring/prometheus.yml` scrapes `api:8000/metrics`
+  - `monitoring/grafana/datasources/datasource.yml` wires up the Prometheus
+    datasource; `monitoring/grafana/dashboards/pragma_g.json` provides panels:
+    requests/sec, p50/p95/p99 latency, score distribution heatmap, drift alert
 
 ### Benchmark to clear
 
-✓ Redpanda producer → consumer → /score pipeline runs for 1 hour without crash
-✓ Grafana dashboard shows live latency and request count
-✓ Evidently report generated after 10K synthetic requests
+- [ ] Redpanda producer → consumer → /score pipeline runs for 1 hour without
+      crash — needs a running docker-compose stack, not available here
+- [ ] Grafana dashboard shows live latency and request count — needs a running
+      stack
+- [ ] Evidently report generated after 10K synthetic requests — `run_drift_check`
+      is implemented and unit-tested, but a 10K-request end-to-end run needs the
+      full stack
 
 -----
 
