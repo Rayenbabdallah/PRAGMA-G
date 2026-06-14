@@ -163,6 +163,7 @@ class ModelLoader:
         """Loads config, vocab, and model weights (or falls back to fresh weights)."""
         with open(self.config_path) as f:
             self.raw_config = yaml.safe_load(f)
+        assert self.raw_config is not None
         self.config = PRAGMAMiniConfig.from_yaml(self.config_path)
         graph_cfg = self.raw_config["graph"]
 
