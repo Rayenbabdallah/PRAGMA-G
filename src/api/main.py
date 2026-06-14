@@ -14,7 +14,9 @@ from starlette.responses import Response
 
 from src.api.model_loader import ModelLoader
 from src.api.schemas import ExplainResponse, ScoreResponse, TransactionRequest
-from src.monitoring.metrics import record_request
+from src.monitoring.metrics import record_model_version, record_request
+
+MODEL_VERSIONS = {"v1", "v2"}
 
 # Singleton model loader
 _loader: ModelLoader | None = None
@@ -65,7 +67,7 @@ async def health() -> dict[str, Any]:
 
 
 @app.post("/score", response_model=ScoreResponse)
-async def score(request: TransactionRequest) -> ScoreResponse:
+async def score(request: TransactionRequest, model: str = "v1") -> ScoreResponse:
     """
     Score an account for AML risk.
 
@@ -73,19 +75,24 @@ async def score(request: TransactionRequest) -> ScoreResponse:
     - decision: flag (>0.70) / review (0.30–0.70) / clear (<0.30)
     - shap_values: top-5 feature attributions
     - latency_ms: end-to-end inference time
+
+    `model`: `v1` (default, Production) or `v2` (Staging) — A/B routing scaffold.
     """
     if _loader is None:
         raise HTTPException(status_code=503, detail="Model not loaded")
+    if model not in MODEL_VERSIONS:
+        raise HTTPException(status_code=400, detail=f"Unknown model version: {model!r}")
 
     t0 = time.perf_counter()
     try:
-        result = _loader.score(request)
+        result = _loader.score(request, model=model)
     except Exception as e:
         logger.error(f"Scoring error for account {request.account_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
     latency_ms = (time.perf_counter() - t0) * 1000
     record_request(latency_ms, result.score)
+    record_model_version(result.model_version)
 
     return ScoreResponse(
         account_id=request.account_id,
@@ -95,31 +102,33 @@ async def score(request: TransactionRequest) -> ScoreResponse:
         shap_values=result.shap_values,
         graph_neighbours=result.graph_neighbours,
         latency_ms=round(latency_ms, 1),
-        model_version=_loader.model_version,
+        model_version=result.model_version,
     )
 
 
 @app.post("/explain", response_model=ExplainResponse)
-async def explain(request: TransactionRequest) -> ExplainResponse:
+async def explain(request: TransactionRequest, model: str = "v1") -> ExplainResponse:
     """
     Detailed SHAP explanation for an account's AML score.
     Returns all feature attributions, not just top-5.
     """
     if _loader is None:
         raise HTTPException(status_code=503, detail="Model not loaded")
+    if model not in MODEL_VERSIONS:
+        raise HTTPException(status_code=400, detail=f"Unknown model version: {model!r}")
 
-    result = _loader.explain(request)
+    result = _loader.explain(request, model=model)
     return ExplainResponse(
         account_id=request.account_id,
         score=result.score,
         all_shap_values=result.all_shap_values,
         graph_neighbourhood=result.graph_neighbourhood,
-        model_version=_loader.model_version,
+        model_version=result.model_version,
     )
 
 
 @app.post("/whatif", response_model=ScoreResponse)
-async def whatif(request: TransactionRequest) -> ScoreResponse:
+async def whatif(request: TransactionRequest, model: str = "v1") -> ScoreResponse:
     """
     What-If analysis: modify a transaction and see how the score changes.
     Used by compliance analysts to understand model decisions.
@@ -127,9 +136,11 @@ async def whatif(request: TransactionRequest) -> ScoreResponse:
     """
     if _loader is None:
         raise HTTPException(status_code=503, detail="Model not loaded")
+    if model not in MODEL_VERSIONS:
+        raise HTTPException(status_code=400, detail=f"Unknown model version: {model!r}")
 
     t0 = time.perf_counter()
-    result = _loader.score(request, counterfactual=True)
+    result = _loader.score(request, counterfactual=True, model=model)
     latency_ms = (time.perf_counter() - t0) * 1000
 
     return ScoreResponse(
@@ -140,7 +151,7 @@ async def whatif(request: TransactionRequest) -> ScoreResponse:
         shap_values=result.shap_values,
         graph_neighbours=result.graph_neighbours,
         latency_ms=round(latency_ms, 1),
-        model_version=_loader.model_version,
+        model_version=result.model_version,
     )
 
 

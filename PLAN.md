@@ -334,24 +334,47 @@ real comparison.
 
 ### Tasks
 
-- [ ] Implement LoRA adapters on PRAGMA-Mini using `peft` library:
+- [x] Implement LoRA adapters on PRAGMA-Mini using `peft` library:
   - Apply to: Query/Value projection matrices in History Encoder
   - Rank: r=8, alpha=16 (standard starting point)
   - Compare: embedding probe vs LoRA fine-tune on AML (per paper §3.1.2)
-- [ ] MLflow model registry:
+  - Note: implemented in Week 5 (`src/training/finetune.py` two-stage embedding-probe
+    → LoRA fine-tune via `peft.LoraConfig`/`get_peft_model`, configurable `lora_r`/`lora_alpha`).
+- [x] MLflow model registry:
   - Register best PRAGMA-G checkpoint as `pragma-g-aml-v1`
   - Stage: Staging → Production after eval gate passes
   - API loads from `Production` stage — no hardcoded paths
-- [ ] A/B test scaffold:
+  - Note: `src/training/registry.py` adds `register_checkpoint`/`load_registry_model`.
+    `run_finetune(..., register_model=True)` logs full `pragma_mini`/`classifier`
+    models via `mlflow.pytorch.log_model` and registers+transitions them to a stage
+    (default `Staging`). `ModelLoader._load_v1` loads `Production`-stage registry
+    models when `MLFLOW_TRACKING_URI` is set, falling back to a local checkpoint or
+    fresh weights otherwise — no hardcoded registry paths.
+- [x] A/B test scaffold:
   - `/score?model=v1` vs `/score?model=v2` routing
   - Log which version served each request
   - Compare PR-AUC on live traffic (even synthetic)
+  - Note: `/score`, `/explain`, `/whatif` accept `model=v1|v2` (400 on unknown version).
+    `ModelLoader.models["v1"|"v2"]` resolves `Production`/`Staging` registry models,
+    falling back to local-checkpoint/fresh-weights and a state-dict copy respectively.
+    `pragma_g_model_version_requests_total{model_version=...}` Prometheus counter
+    records which version served each request. `scripts/compare_models.py` scores
+    synthetic traffic with both versions and prints PR-AUC/ROC-AUC per version.
 
 ### Benchmark to clear
 
-✓ LoRA fine-tune PR-AUC ≥ embedding probe PR-AUC (matches paper’s finding)
-✓ MLflow model registry has at least 2 registered versions
-✓ API loads from registry, not from a local path
+- [ ] LoRA fine-tune PR-AUC ≥ embedding probe PR-AUC (matches paper's finding)
+  - Note: both stages run in `run_finetune`/`scripts/compare_models.py`, but not
+    benchmarked on the real IBM AML dataset in this sandbox (no GPU/data download).
+- [ ] MLflow model registry has at least 2 registered versions
+  - Note: `tests/test_registry.py` registers and loads 1 version end-to-end against
+    a local sqlite registry; a second version (e.g. promoting to `Production`) isn't
+    exercised here since it requires a real second training run.
+- [ ] API loads from registry, not from a local path
+  - Note: `ModelLoader` loads from the registry when `MLFLOW_TRACKING_URI` is set
+    (wired in `docker-compose.yml` for the `api` service); in tests/CI this env var
+    is unset by design so the loader falls back to local checkpoint/fresh weights —
+    not verified against a live MLflow server in this sandbox.
 
 -----
 

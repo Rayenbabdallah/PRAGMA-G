@@ -1,13 +1,23 @@
-"""Singleton model loader + inference pipeline for PRAGMA-G serving (PLAN.md Week 6).
+"""Singleton model loader + inference pipeline for PRAGMA-G serving (PLAN.md Week 6/9).
 
 Loads PRAGMA-Mini (+ LoRA adapter) and the `PRAGMAGClassifier`, builds an
 ad-hoc 1-hop transaction graph from a request's events, and runs the full
 PRAGMA-G pipeline to produce an AML risk score with feature attributions.
 
-Checkpoint loading order:
-  1. `mlruns/checkpoints/{pragma_mini_lora.pt,classifier.pt}` if both exist
-     (written by `src.training.finetune`).
-  2. Otherwise, freshly-initialised weights with `model_version =
+Two model versions are loaded for the `/score?model=v1|v2` A/B scaffold
+(PLAN.md Week 9):
+
+Checkpoint loading order (per version):
+  1. MLflow model registry, `{mlflow.model_registry_name}` at stage
+     `Production` (v1) / `Staging` (v2) — only attempted if the
+     `MLFLOW_TRACKING_URI` env var is set (written by
+     `src.training.registry.register_checkpoint`).
+  2. `v1` only: `mlruns/checkpoints/{pragma_mini_lora.pt,classifier.pt}` if
+     both exist (written by `src.training.finetune`).
+  3. `v2` only: falls back to the same weights as `v1`, tagged with a
+     `-v2-fallback` suffix — keeps the A/B scaffold routable without a second
+     registered model.
+  4. Otherwise, freshly-initialised weights with `model_version =
      "pragma-g-untrained-dev"` — keeps the API runnable for demos/tests
      without a full training run.
 
@@ -19,6 +29,7 @@ Vocabulary loading order:
 from __future__ import annotations
 
 import copy
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -36,6 +47,7 @@ from src.tokenizer.tokenizer import EncodedEvent, KVTTokenizer, log_time_transfo
 from src.tokenizer.vocab import Vocab
 from src.training.dataset import collate_histories, make_synthetic_transactions_df
 from src.training.finetune import build_lora_target_modules
+from src.training.registry import load_registry_model
 
 CONFIG_PATH = Path("configs/pragma_s.yaml")
 VOCAB_PATH = Path("data/vocab.json")
@@ -67,6 +79,7 @@ class ScoreResult:
     threshold_version: str
     shap_values: dict[str, float]
     graph_neighbours: int
+    model_version: str
 
 
 @dataclass
@@ -74,6 +87,22 @@ class ExplainResult:
     score: float
     all_shap_values: dict[str, float]
     graph_neighbourhood: list[dict[str, Any]]
+    model_version: str
+
+
+@dataclass
+class _LoadedModel:
+    """One A/B-routable `(pragma_mini, classifier)` pair (PLAN.md Week 9).
+
+    `classifier` is typed as `nn.Module` (not `PRAGMAGClassifier`) because a
+    registry-loaded classifier comes back from `mlflow.pytorch.load_model` as
+    a generic `nn.Module`; its `forward` signature still matches
+    `PRAGMAGClassifier.forward`.
+    """
+
+    pragma_mini: nn.Module
+    classifier: nn.Module
+    version: str
 
 
 def _event_dict(event: EventRecord, account_id: str) -> dict[str, Any]:
@@ -154,18 +183,91 @@ class ModelLoader:
         self.config: PRAGMAMiniConfig | None = None
         self.raw_config: dict[str, Any] | None = None
         self.vocab: Vocab | None = None
-        self.pragma_mini: nn.Module | None = None
-        self.classifier: PRAGMAGClassifier | None = None
         self.tokenizer: KVTTokenizer | None = None
+        self.models: dict[str, _LoadedModel] = {}
         self.model_version: str = "not_loaded"
 
+    def _build_model_pair(self, graph_cfg: dict[str, Any]) -> tuple[nn.Module, PRAGMAGClassifier]:
+        """Constructs a fresh (untrained) `(pragma_mini, classifier)` pair."""
+        assert self.config is not None
+        pragma_mini = PRAGMAMini(self.config)
+        lora_config = LoraConfig(
+            r=graph_cfg["lora"]["r"],
+            lora_alpha=graph_cfg["lora"]["alpha"],
+            target_modules=build_lora_target_modules(self.config.history_layers),
+        )
+        # peft's type stubs expect a transformers `PreTrainedModel`, but
+        # `get_peft_model` works with any `nn.Module` at runtime.
+        peft_mini = get_peft_model(pragma_mini, lora_config)  # type: ignore[arg-type]
+        classifier = PRAGMAGClassifier(
+            d_model=self.config.d_model,
+            graph_hidden_channels=graph_cfg["hidden_channels"],
+            graph_n_layers=graph_cfg["n_layers"],
+            graph_aggregation=graph_cfg["aggregation"],
+            dropout=graph_cfg["dropout"],
+        )
+        return peft_mini, classifier
+
+    def _load_local_checkpoint(self, pragma_mini: nn.Module, classifier: PRAGMAGClassifier) -> bool:
+        mini_ckpt = self.checkpoint_dir / "pragma_mini_lora.pt"
+        clf_ckpt = self.checkpoint_dir / "classifier.pt"
+        if mini_ckpt.exists() and clf_ckpt.exists():
+            pragma_mini.load_state_dict(torch.load(mini_ckpt, map_location="cpu"))
+            classifier.load_state_dict(torch.load(clf_ckpt, map_location="cpu"))
+            return True
+        return False
+
+    def _load_v1(
+        self,
+        graph_cfg: dict[str, Any],
+        mlflow_cfg: dict[str, Any],
+        tracking_uri: str | None,
+    ) -> _LoadedModel:
+        """`v1` = `Production`-stage registry model, else local checkpoint, else fresh weights."""
+        if tracking_uri:
+            registry = load_registry_model(
+                mlflow_cfg["model_registry_name"], stage="Production", tracking_uri=tracking_uri
+            )
+            if registry is not None:
+                pragma_mini, classifier, version = registry
+                version_str = f"{mlflow_cfg['model_registry_name']}-v{version}-Production"
+                return _LoadedModel(pragma_mini, classifier, version_str)
+
+        pragma_mini, classifier = self._build_model_pair(graph_cfg)
+        if self._load_local_checkpoint(pragma_mini, classifier):
+            return _LoadedModel(pragma_mini, classifier, "pragma-g-aml-v1")
+        return _LoadedModel(pragma_mini, classifier, "pragma-g-untrained-dev")
+
+    def _load_v2(
+        self,
+        graph_cfg: dict[str, Any],
+        mlflow_cfg: dict[str, Any],
+        tracking_uri: str | None,
+        v1: _LoadedModel,
+    ) -> _LoadedModel:
+        """`v2` = `Staging`-stage registry model, else a copy of `v1` (A/B scaffold)."""
+        if tracking_uri:
+            registry = load_registry_model(
+                mlflow_cfg["model_registry_name"], stage="Staging", tracking_uri=tracking_uri
+            )
+            if registry is not None:
+                pragma_mini, classifier, version = registry
+                version_str = f"{mlflow_cfg['model_registry_name']}-v{version}-Staging"
+                return _LoadedModel(pragma_mini, classifier, version_str)
+
+        pragma_mini, classifier = self._build_model_pair(graph_cfg)
+        pragma_mini.load_state_dict(v1.pragma_mini.state_dict())
+        classifier.load_state_dict(v1.classifier.state_dict())
+        return _LoadedModel(pragma_mini, classifier, f"{v1.version}-v2-fallback")
+
     def load(self) -> None:
-        """Loads config, vocab, and model weights (or falls back to fresh weights)."""
+        """Loads config, vocab, and the `v1`/`v2` model pairs (PLAN.md Week 9 A/B scaffold)."""
         with open(self.config_path) as f:
             self.raw_config = yaml.safe_load(f)
         assert self.raw_config is not None
         self.config = PRAGMAMiniConfig.from_yaml(self.config_path)
         graph_cfg = self.raw_config["graph"]
+        mlflow_cfg = self.raw_config["mlflow"]
 
         if self.vocab_path.exists():
             self.vocab = Vocab.load(self.vocab_path)
@@ -177,38 +279,22 @@ class ModelLoader:
             )
         self.tokenizer = KVTTokenizer(self.vocab)
 
-        pragma_mini = PRAGMAMini(self.config)
-        lora_config = LoraConfig(
-            r=graph_cfg["lora"]["r"],
-            lora_alpha=graph_cfg["lora"]["alpha"],
-            target_modules=build_lora_target_modules(self.config.history_layers),
-        )
-        # peft's type stubs expect a transformers `PreTrainedModel`, but
-        # `get_peft_model` works with any `nn.Module` at runtime.
-        self.pragma_mini = get_peft_model(pragma_mini, lora_config)  # type: ignore[arg-type]
+        # Only attempt MLflow registry lookups if a tracking server is
+        # configured (e.g. by docker-compose) — keeps tests/CI offline and fast.
+        tracking_uri = os.environ.get("MLFLOW_TRACKING_URI")
 
-        self.classifier = PRAGMAGClassifier(
-            d_model=self.config.d_model,
-            graph_hidden_channels=graph_cfg["hidden_channels"],
-            graph_n_layers=graph_cfg["n_layers"],
-            graph_aggregation=graph_cfg["aggregation"],
-            dropout=graph_cfg["dropout"],
-        )
+        v1 = self._load_v1(graph_cfg, mlflow_cfg, tracking_uri)
+        v2 = self._load_v2(graph_cfg, mlflow_cfg, tracking_uri, v1)
 
-        mini_ckpt = self.checkpoint_dir / "pragma_mini_lora.pt"
-        clf_ckpt = self.checkpoint_dir / "classifier.pt"
-        if mini_ckpt.exists() and clf_ckpt.exists():
-            self.pragma_mini.load_state_dict(torch.load(mini_ckpt, map_location="cpu"))
-            self.classifier.load_state_dict(torch.load(clf_ckpt, map_location="cpu"))
-            self.model_version = "pragma-g-aml-v1"
-        else:
-            self.model_version = "pragma-g-untrained-dev"
+        for m in (v1, v2):
+            m.pragma_mini.eval()
+            m.classifier.eval()
 
-        self.pragma_mini.eval()
-        self.classifier.eval()
+        self.models = {"v1": v1, "v2": v2}
+        self.model_version = v1.version
 
     def warmup(self, n: int = 10) -> None:
-        """Runs `n` dummy inferences to warm up CPU kernel caches."""
+        """Runs `n` dummy inferences (per model version) to warm up CPU kernel caches."""
         dummy = TransactionRequest(
             account_id="WARMUP",
             events=[
@@ -222,7 +308,8 @@ class ModelLoader:
             ],
         )
         for _ in range(n):
-            self.score(dummy)
+            for model_version in self.models:
+                self.score(dummy, model=model_version)
 
     def _encode_events(
         self, request: TransactionRequest
@@ -267,18 +354,18 @@ class ModelLoader:
 
     def _classify(
         self,
+        m: _LoadedModel,
         z_account: Tensor,
         edge_index: Tensor,
         edge_attr: Tensor,
         n_counterparties: int,
         use_graph: bool,
     ) -> float:
-        assert self.classifier is not None
         z_temporal = torch.cat(
             [z_account.unsqueeze(0), torch.zeros(n_counterparties, z_account.shape[-1])], dim=0
         )
         with torch.no_grad():
-            logits = self.classifier(z_temporal, edge_index, edge_attr, use_graph=use_graph)
+            logits = m.classifier(z_temporal, edge_index, edge_attr, use_graph=use_graph)
         return torch.sigmoid(logits).mean().item()
 
     def _decision(self, score: float) -> tuple[str, str]:
@@ -292,11 +379,10 @@ class ModelLoader:
             decision = "clear"
         return decision, thresholds["version"]
 
-    def _attributions(self, request: TransactionRequest) -> dict[str, float]:
+    def _attributions(self, request: TransactionRequest, m: _LoadedModel) -> dict[str, float]:
         """Ablation-based feature attributions: for each feature, the drop in score
         when that feature is removed/neutralised (positive => increases risk).
         """
-        assert self.pragma_mini is not None
         assert self.vocab is not None
         assert self.tokenizer is not None
 
@@ -321,47 +407,52 @@ class ModelLoader:
         names = list(variants.keys())
         batch = collate_histories([variants[n] for n in names], self.vocab, max_events=64)
         with torch.no_grad():
-            z_h = self.pragma_mini(batch)["z_h"]
+            z_h = m.pragma_mini(batch)["z_h"]
 
         z = dict(zip(names, z_h))
-        base_score = self._classify(z["baseline"], edge_index, edge_attr, n_cp, use_graph=True)
+        base_score = self._classify(m, z["baseline"], edge_index, edge_attr, n_cp, use_graph=True)
 
         scores = {
             "amount_paid": self._classify(
-                z["amount_paid"], edge_index, edge_attr, n_cp, use_graph=True
+                m, z["amount_paid"], edge_index, edge_attr, n_cp, use_graph=True
             ),
             "payment_format": self._classify(
-                z["payment_format"], edge_index, edge_attr, n_cp, use_graph=True
+                m, z["payment_format"], edge_index, edge_attr, n_cp, use_graph=True
             ),
             "receiving_currency": self._classify(
-                z["receiving_currency"], edge_index, edge_attr, n_cp, use_graph=True
+                m, z["receiving_currency"], edge_index, edge_attr, n_cp, use_graph=True
             ),
             "payment_currency": self._classify(
-                z["payment_currency"], edge_index, edge_attr, n_cp, use_graph=True
+                m, z["payment_currency"], edge_index, edge_attr, n_cp, use_graph=True
             ),
             "graph_fan_in_ratio": self._classify(
-                z["baseline"], edge_index, edge_attr, n_cp, use_graph=False
+                m, z["baseline"], edge_index, edge_attr, n_cp, use_graph=False
             ),
             "temporal_velocity": self._classify(
-                z["temporal_velocity"], edge_index, edge_attr, n_cp, use_graph=True
+                m, z["temporal_velocity"], edge_index, edge_attr, n_cp, use_graph=True
             ),
         }
         return {feature: round(base_score - scores[feature], 4) for feature in EXPLAIN_FEATURES}
 
-    def score(self, request: TransactionRequest, counterfactual: bool = False) -> ScoreResult:
-        assert self.pragma_mini is not None
+    def _resolve_model(self, model: str) -> _LoadedModel:
+        return self.models.get(model, self.models["v1"])
+
+    def score(
+        self, request: TransactionRequest, counterfactual: bool = False, model: str = "v1"
+    ) -> ScoreResult:
         assert self.vocab is not None
+        m = self._resolve_model(model)
 
         _, encoded = self._encode_events(request)
         batch = collate_histories([encoded], self.vocab, max_events=64)
         with torch.no_grad():
-            z_h = self.pragma_mini(batch)["z_h"][0]
+            z_h = m.pragma_mini(batch)["z_h"][0]
 
         edge_index, edge_attr, counterparties = self._ad_hoc_graph(request)
-        score = self._classify(z_h, edge_index, edge_attr, len(counterparties), use_graph=True)
+        score = self._classify(m, z_h, edge_index, edge_attr, len(counterparties), use_graph=True)
         decision, threshold_version = self._decision(score)
 
-        attributions = self._attributions(request)
+        attributions = self._attributions(request, m)
         top5 = dict(
             sorted(attributions.items(), key=lambda kv: abs(kv[1]), reverse=True)[:5]
         )
@@ -372,20 +463,21 @@ class ModelLoader:
             threshold_version=threshold_version,
             shap_values=top5,
             graph_neighbours=len(counterparties),
+            model_version=m.version,
         )
 
-    def explain(self, request: TransactionRequest) -> ExplainResult:
+    def explain(self, request: TransactionRequest, model: str = "v1") -> ExplainResult:
         _, encoded = self._encode_events(request)
-        assert self.pragma_mini is not None
         assert self.vocab is not None
+        m = self._resolve_model(model)
         batch = collate_histories([encoded], self.vocab, max_events=64)
         with torch.no_grad():
-            z_h = self.pragma_mini(batch)["z_h"][0]
+            z_h = m.pragma_mini(batch)["z_h"][0]
 
         edge_index, edge_attr, counterparties = self._ad_hoc_graph(request)
-        score = self._classify(z_h, edge_index, edge_attr, len(counterparties), use_graph=True)
+        score = self._classify(m, z_h, edge_index, edge_attr, len(counterparties), use_graph=True)
 
-        attributions = self._attributions(request)
+        attributions = self._attributions(request, m)
         neighbourhood = [
             {"account_id": acc, "relation": "counterparty"} for acc in counterparties
         ]
@@ -394,4 +486,5 @@ class ModelLoader:
             score=score,
             all_shap_values=attributions,
             graph_neighbourhood=neighbourhood,
+            model_version=m.version,
         )

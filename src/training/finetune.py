@@ -34,6 +34,7 @@ from src.tokenizer.vocab import Vocab
 from src.training.dataset import compute_node_embeddings
 from src.training.metrics import compute_metrics
 from src.training.pretrain import load_transactions
+from src.training.registry import register_checkpoint
 
 
 def build_lora_target_modules(history_layers: int) -> list[str]:
@@ -61,6 +62,9 @@ def run_finetune(
     experiment_name: str = "pragma-g-aml",
     checkpoint_dir: Path | None = None,
     use_graph: bool = True,
+    register_model: bool = False,
+    model_registry_name: str = "pragma-g-aml",
+    registry_stage: str = "Staging",
 ) -> dict[str, float]:
     """Runs the two-stage fine-tuning loop; returns test-split metrics."""
     vocab = Vocab().build(
@@ -230,6 +234,18 @@ def run_finetune(
             mlflow.log_artifact(str(checkpoint_dir / "pragma_mini_lora.pt"))
             mlflow.log_artifact(str(checkpoint_dir / "classifier.pt"))
 
+        # Log full models (architecture + weights) so the registry can hand
+        # back ready-to-use `nn.Module`s — see `src.training.registry`.
+        mlflow.pytorch.log_model(peft_mini, artifact_path="pragma_mini")
+        mlflow.pytorch.log_model(classifier, artifact_path="classifier")
+
+        if register_model:
+            run_id = mlflow.active_run().info.run_id  # type: ignore[union-attr]
+            version = register_checkpoint(
+                run_id, model_registry_name, tracking_uri=tracking_uri, stage=registry_stage
+            )
+            print(f"Registered {model_registry_name} v{version} -> {registry_stage}")
+
     return test_metrics
 
 
@@ -247,6 +263,17 @@ def main() -> None:
         type=str,
         default=None,
         help="MLflow tracking URI (default: local ./mlruns store)",
+    )
+    parser.add_argument(
+        "--register-model",
+        action="store_true",
+        help="Register the trained checkpoint in the MLflow model registry",
+    )
+    parser.add_argument(
+        "--registry-stage",
+        type=str,
+        default="Staging",
+        help="Stage to transition the registered model version to (default: Staging)",
     )
     args = parser.parse_args()
 
@@ -279,6 +306,9 @@ def main() -> None:
         experiment_name=mlflow_cfg["experiment_name"],
         checkpoint_dir=args.checkpoint_dir,
         use_graph=not args.no_graph,
+        register_model=args.register_model,
+        model_registry_name=mlflow_cfg["model_registry_name"],
+        registry_stage=args.registry_stage,
     )
     print(f"Test metrics: {metrics}")
 

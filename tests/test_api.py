@@ -100,3 +100,23 @@ def test_metrics(client: TestClient) -> None:
     response = client.get("/metrics")
     assert response.status_code == 200
     assert b"pragma_g_requests_total" in response.content
+
+
+def test_score_model_v2(client: TestClient) -> None:
+    """`/score?model=v2` routes to the `v2` model and is reflected in the response."""
+    response = client.post("/score", json=VALID_PAYLOAD, params={"model": "v2"})
+    assert response.status_code == 200
+    body = response.json()
+    assert 0.0 <= body["score"] <= 1.0
+    assert "v2" in body["model_version"]
+
+
+def test_score_unknown_model(client: TestClient) -> None:
+    response = client.post("/score", json=VALID_PAYLOAD, params={"model": "v3"})
+    assert response.status_code == 400
+
+
+def test_metrics_model_version_label(client: TestClient) -> None:
+    client.post("/score", json=VALID_PAYLOAD, params={"model": "v1"})
+    response = client.get("/metrics")
+    assert b"pragma_g_model_version_requests_total" in response.content
