@@ -24,6 +24,7 @@ _loader: ModelLoader | None = None
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Load model on startup, clean up on shutdown."""
     global _loader
+    app.state.start_time = time.time()
     logger.info("Loading PRAGMA-G model...")
     _loader = ModelLoader()
     _loader.load()
@@ -147,8 +148,3 @@ async def whatif(request: TransactionRequest) -> ScoreResponse:
 async def metrics() -> Response:
     """Prometheus metrics endpoint."""
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
-
-
-@app.on_event("startup")
-async def startup_event() -> None:
-    app.state.start_time = time.time()

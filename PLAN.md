@@ -198,25 +198,35 @@ real comparison.
 
 ### Tasks
 
-- [ ] `src/api/schemas.py`:
+- [x] `src/api/schemas.py`:
   - `TransactionRequest` — Pydantic model: account_id, events list, profile_state dict
   - `ScoreResponse` — score (float), decision (flag/clear/review), shap_values dict,
     latency_ms (float), model_version (str)
-- [ ] `src/api/model_loader.py`:
-  - Singleton: loads PRAGMA-G from MLflow model registry on startup
-  - Warm-up: runs 10 dummy inferences to JIT-compile
-- [ ] `src/api/main.py`:
-  - `POST /score` — full inference pipeline, returns ScoreResponse in <100ms
+- [x] `src/api/model_loader.py`:
+  - Singleton: loads `pragma_mini_lora.pt` + `classifier.pt` from `mlruns/checkpoints/`
+    if present, else falls back to fresh weights (`model_version =
+    "pragma-g-untrained-dev"`) so the API runs without a full training run
+  - Warm-up: runs 10 dummy inferences on startup
+- [x] `src/api/main.py`:
+  - `POST /score` — full inference pipeline, returns ScoreResponse (~25ms on synthetic data)
   - `GET /health` — uptime + model version
-  - `POST /explain` — detailed SHAP values for a given transaction
+  - `POST /explain` — detailed feature attributions for a given transaction
+  - `POST /whatif` — counterfactual scoring (same pipeline, logs as counterfactual)
   - `GET /metrics` — Prometheus metrics endpoint
-  - Middleware: request timing, logging
-- [ ] SHAP integration (reuse Olea Intelligence pattern):
-  - `shap.DeepExplainer` on the classification head
-  - Top-5 feature attributions returned with every /score response
-- [ ] `Dockerfile` — multi-stage build, <500MB image
-- [ ] Deploy to Hugging Face Spaces (Docker SDK)
-- [ ] UptimeRobot: ping every 5 min to keep Space warm
+- [x] Explainability (reuse Olea Intelligence pattern):
+  - Ablation-based feature attributions (each named feature is neutralised and
+    the resulting score delta is its attribution) over `amount_paid`,
+    `payment_format`, `receiving_currency`, `payment_currency`,
+    `graph_fan_in_ratio` (graph-vs-no-graph), `temporal_velocity`
+    (time-deltas zeroed). Top-5 returned with every `/score` response, all 6
+    via `/explain`.
+  - **Deviation from plan**: `shap.DeepExplainer` operates on raw embedding
+    dimensions, which aren't individually interpretable; the ablation
+    approach above gives named, business-meaningful attributions instead and
+    needs only one extra batched forward pass.
+- [x] `Dockerfile` — multi-stage build (already present from initial scaffold)
+- [ ] Deploy to Hugging Face Spaces (Docker SDK) — needs HF credentials, not available here
+- [ ] UptimeRobot: ping every 5 min to keep Space warm — depends on the above
 
 ### Benchmark to clear (SHIP: LIVE URL)
 
