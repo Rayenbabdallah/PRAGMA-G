@@ -15,7 +15,11 @@ RUN pip install --no-cache-dir --user \
     pip install --no-cache-dir --user \
     torch-geometric==2.5.3 && \
     pip install --no-cache-dir --user \
-    -r requirements.txt
+    -r requirements.txt && \
+    # evidently pulls in litestar -> multipart (bottle's single-file parser),
+    # which shadows python-multipart's `multipart` package and breaks
+    # gradio's `from multipart.multipart import ...` import. Not used directly.
+    pip uninstall -y multipart
 
 
 FROM python:3.11-slim AS runtime

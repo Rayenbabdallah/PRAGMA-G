@@ -24,6 +24,11 @@ jobs:
           pip install torch==2.3.1 --index-url https://download.pytorch.org/whl/cpu
           pip install torch-geometric==2.5.3
           pip install -r requirements.txt
+          # evidently pulls in litestar -> multipart (bottle's single-file
+          # parser), which shadows python-multipart's `multipart` package and
+          # breaks gradio's `from multipart.multipart import ...` import.
+          # We don't use litestar directly, so drop it.
+          pip uninstall -y multipart
 
       - name: Lint (ruff)
         run: ruff check src/ tests/
