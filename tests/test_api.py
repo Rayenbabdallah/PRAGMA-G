@@ -90,6 +90,38 @@ def test_explain(client: TestClient) -> None:
     assert body["graph_neighbourhood"] == [{"account_id": "ACC_5678", "relation": "counterparty"}]
 
 
+def test_explain_graph(client: TestClient) -> None:
+    response = client.post("/explain/graph", json=VALID_PAYLOAD)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["account_id"] == "ACC_1234"
+    assert body["nodes"] == ["ACC_1234", "ACC_5678"]
+    assert len(body["edges"]) == 1
+    edge = body["edges"][0]
+    assert edge["source"] == "ACC_1234"
+    assert edge["target"] == "ACC_5678"
+    assert 0.0 <= edge["score"] <= 1.0
+
+
+def test_explain_graph_no_counterparty(client: TestClient) -> None:
+    payload = {
+        "account_id": "ACC_0001",
+        "events": [
+            {
+                "type": "card_payment",
+                "amount": 42.0,
+                "currency": "Euro",
+                "timestamp": "2026-01-01T00:00:00",
+            }
+        ],
+    }
+    response = client.post("/explain/graph", json=payload)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["nodes"] == ["ACC_0001"]
+    assert body["edges"] == []
+
+
 def test_whatif(client: TestClient) -> None:
     response = client.post("/whatif", json=VALID_PAYLOAD)
     assert response.status_code == 200

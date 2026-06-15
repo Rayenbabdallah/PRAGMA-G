@@ -91,6 +91,23 @@ class ExplainResult:
 
 
 @dataclass
+class GraphEdgeResult:
+    source: str
+    target: str
+    weight: float
+    score: float
+    relation: str = "counterparty"
+
+
+@dataclass
+class GraphExplainResult:
+    account_id: str
+    model_version: str
+    nodes: list[str]
+    edges: list[GraphEdgeResult]
+
+
+@dataclass
 class _LoadedModel:
     """One A/B-routable `(pragma_mini, classifier)` pair (PLAN.md Week 9).
 
@@ -487,4 +504,51 @@ class ModelLoader:
             all_shap_values=attributions,
             graph_neighbourhood=neighbourhood,
             model_version=m.version,
+        )
+
+    def explain_graph(self, request: TransactionRequest, model: str = "v1") -> GraphExplainResult:
+        """1-hop transaction-graph neighbourhood with per-edge AML risk scores.
+
+        `PRAGMAGClassifier` scores *transactions* (edges), not accounts (nodes)
+        — see `src/model/classifier.py` — so each edge in the returned graph
+        carries its own risk score, in a format suitable for D3.js/vis.js.
+        Limited to the 1-hop ad-hoc graph built from the request's own events
+        (PLAN.md Week 10 calls for a 2-hop neighbourhood, which would require a
+        persisted account graph rather than a single stateless request).
+        """
+        assert self.vocab is not None
+        m = self._resolve_model(model)
+
+        _, encoded = self._encode_events(request)
+        batch = collate_histories([encoded], self.vocab, max_events=64)
+        with torch.no_grad():
+            z_h = m.pragma_mini(batch)["z_h"][0]
+
+        edge_index, edge_attr, counterparties = self._ad_hoc_graph(request)
+        n_cp = len(counterparties)
+        account_ids = [request.account_id] + counterparties
+
+        edges: list[GraphEdgeResult] = []
+        if counterparties:
+            z_temporal = torch.cat([z_h.unsqueeze(0), torch.zeros(n_cp, z_h.shape[-1])], dim=0)
+            with torch.no_grad():
+                logits = m.classifier(z_temporal, edge_index, edge_attr, use_graph=True)
+            edge_scores = torch.sigmoid(logits).tolist()
+            for src, dst, attr, edge_score in zip(
+                edge_index[0].tolist(), edge_index[1].tolist(), edge_attr.tolist(), edge_scores
+            ):
+                edges.append(
+                    GraphEdgeResult(
+                        source=account_ids[src],
+                        target=account_ids[dst],
+                        weight=round(attr[0], 4),
+                        score=round(edge_score, 4),
+                    )
+                )
+
+        return GraphExplainResult(
+            account_id=request.account_id,
+            model_version=m.version,
+            nodes=account_ids,
+            edges=edges,
         )

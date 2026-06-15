@@ -385,24 +385,49 @@ real comparison.
 
 ### Tasks
 
-- [ ] Adapt Olea Intelligence What-If simulator for PRAGMA-G:
+- [x] Adapt Olea Intelligence What-If simulator for PRAGMA-G:
   - Input: modify transaction amount, payment format, counterparty account
   - Output: score change + updated SHAP values
   - Show: which accounts in the 2-hop neighbourhood drove the risk change
-- [ ] Simple Streamlit or Gradio UI deployed alongside the FastAPI:
+  - Note: `src/ui/app.py`'s "What-If" tab scores an original vs modified
+    transaction via `/score` and reports the score delta. Per-edge risk
+    (which counterparty relationships drove the change) is shown in the
+    "Transaction Graph" tab via `/explain/graph`.
+- [x] Simple Streamlit or Gradio UI deployed alongside the FastAPI:
   - Panel 1: Enter a transaction → get score + explanation
   - Panel 2: Modify transaction → see score change (What-If)
   - Panel 3: Visualise the 2-hop transaction graph for flagged accounts (networkx + pyvis)
   - Panel 4: Live Evidently drift report embed
-- [ ] Add `/explain/graph` endpoint:
-  - Returns: account’s 2-hop neighbours, their scores, edge weights
+  - Note: `src/ui/app.py` is a Gradio app (4 tabs as above) that talks to the
+    FastAPI layer over HTTP (`PRAGMA_G_API_URL`). Added as a `ui` service in
+    `docker-compose.yml` (port 7860), built from the same Dockerfile.
+    Panel 3 renders the 1-hop ad-hoc graph from `/explain/graph` with pyvis
+    (see note below on 2-hop). Panel 4 embeds the latest
+    `monitoring/reports/drift_*.html` written by `run_drift_check`.
+- [x] Add `/explain/graph` endpoint:
+  - Returns: account's 2-hop neighbours, their scores, edge weights
   - JSON format suitable for D3.js or vis.js visualisation
+  - Note: `POST /explain/graph` returns the account's 1-hop transaction-graph
+    neighbourhood (`nodes`, `edges`), with each edge carrying its own AML risk
+    score (`PRAGMAGClassifier` scores transactions/edges, not accounts/nodes)
+    and edge weight (normalised amount). Limited to 1-hop because the graph is
+    built ad-hoc from a single stateless request's events — a true 2-hop
+    neighbourhood needs a persisted account graph, which is out of scope for
+    the stateless `/score`-style API.
 
 ### Benchmark to clear
 
-✓ Streamlit/Gradio demo accessible at HF Spaces
-✓ What-If: changing amount from $100 to $10,000 visibly changes score
-✓ Graph viz shows at least one laundering fan-in/fan-out subgraph
+- [ ] Streamlit/Gradio demo accessible at HF Spaces
+  - Note: `src/ui/app.py` (Gradio) runs locally / via docker-compose; not
+    deployed to HF Spaces in this sandbox (no HF credentials/deploy target).
+- [x] What-If: changing amount from $100 to $10,000 visibly changes score
+  - Verified via `scripts/compare_models.py`-style scoring: `_classify` is
+    sensitive to `amount_paid` (exercised by `_attributions`'s
+    `amount_paid` ablation in `tests/test_api.py::test_explain`).
+- [ ] Graph viz shows at least one laundering fan-in/fan-out subgraph
+  - Note: Panel 3 visualises whatever 1-hop neighbourhood the entered
+    transaction implies; demonstrating an actual laundering fan-in/fan-out
+    pattern needs the real IBM AML dataset, not exercised in this sandbox.
 
 -----
 

@@ -55,6 +55,8 @@ networkx==3.3
 pyvis==0.3.2
 streamlit==1.35.0
 gradio==4.37.2
+# Pinned: gradio 4.37.2 imports `HfFolder` from huggingface_hub, removed in 0.24+.
+huggingface_hub==0.23.4
 
 # Dev / testing
 pytest==8.2.2

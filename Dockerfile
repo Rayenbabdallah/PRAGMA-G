@@ -35,9 +35,9 @@ COPY scripts/ ./scripts/
 RUN useradd --create-home pragma && chown -R pragma:pragma /app
 USER pragma
 
-EXPOSE 8000
+EXPOSE 8000 7860
 
-# Health check
+# Health check (api service; overridden for the `ui` service in docker-compose.yml)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 

@@ -13,7 +13,13 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from starlette.responses import Response
 
 from src.api.model_loader import ModelLoader
-from src.api.schemas import ExplainResponse, ScoreResponse, TransactionRequest
+from src.api.schemas import (
+    ExplainResponse,
+    GraphEdge,
+    GraphExplainResponse,
+    ScoreResponse,
+    TransactionRequest,
+)
 from src.monitoring.metrics import record_model_version, record_request
 
 MODEL_VERSIONS = {"v1", "v2"}
@@ -124,6 +130,29 @@ async def explain(request: TransactionRequest, model: str = "v1") -> ExplainResp
         all_shap_values=result.all_shap_values,
         graph_neighbourhood=result.graph_neighbourhood,
         model_version=result.model_version,
+    )
+
+
+@app.post("/explain/graph", response_model=GraphExplainResponse)
+async def explain_graph(request: TransactionRequest, model: str = "v1") -> GraphExplainResponse:
+    """
+    Graph explainability for visualisation (D3.js/vis.js).
+
+    Returns the account's 1-hop transaction-graph neighbourhood: every
+    counterparty account, and one edge per transaction with its own AML risk
+    score and edge weight (normalised amount).
+    """
+    if _loader is None:
+        raise HTTPException(status_code=503, detail="Model not loaded")
+    if model not in MODEL_VERSIONS:
+        raise HTTPException(status_code=400, detail=f"Unknown model version: {model!r}")
+
+    result = _loader.explain_graph(request, model=model)
+    return GraphExplainResponse(
+        account_id=result.account_id,
+        model_version=result.model_version,
+        nodes=result.nodes,
+        edges=[GraphEdge(**vars(e)) for e in result.edges],
     )
 
 

@@ -125,3 +125,38 @@ class ExplainResponse(BaseModel):
         ..., description="2-hop graph neighbourhood with per-node scores"
     )
     model_version: str
+
+
+class GraphEdge(BaseModel):
+    """One transaction-graph edge with its own AML risk score."""
+    source: str = Field(..., description="Sender account ID")
+    target: str = Field(..., description="Receiver/counterparty account ID")
+    weight: float = Field(..., description="Normalised transaction amount (edge feature)")
+    score: float = Field(..., ge=0.0, le=1.0, description="AML risk score for this transaction")
+    relation: str = Field("counterparty", description="Edge relation type")
+
+
+class GraphExplainResponse(BaseModel):
+    """1-hop transaction-graph neighbourhood, suitable for D3.js/vis.js."""
+    account_id: str
+    model_version: str
+    nodes: list[str] = Field(..., description="Account IDs in the neighbourhood (root first)")
+    edges: list[GraphEdge] = Field(..., description="Transactions, each with its own risk score")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "account_id": "ACC_1234",
+                "model_version": "pragma-g-aml-v1",
+                "nodes": ["ACC_1234", "ACC_5678"],
+                "edges": [
+                    {
+                        "source": "ACC_1234",
+                        "target": "ACC_5678",
+                        "weight": 0.62,
+                        "score": 0.847,
+                        "relation": "counterparty",
+                    }
+                ],
+            }
+        }

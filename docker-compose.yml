@@ -19,6 +19,26 @@ services:
       - ./data:/app/data:ro
     restart: unless-stopped
 
+  # Gradio What-If simulator + explainability UI (PLAN.md Week 10)
+  ui:
+    build: .
+    command: python -m src.ui.app
+    ports:
+      - "7860:7860"
+    environment:
+      - PRAGMA_G_API_URL=http://api:8000
+    depends_on:
+      - api
+    volumes:
+      - ./monitoring:/app/monitoring:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7860"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+    restart: unless-stopped
+
   # MLflow tracking server
   mlflow:
     image: ghcr.io/mlflow/mlflow:v2.13.2
